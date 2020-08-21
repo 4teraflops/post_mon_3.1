@@ -5,6 +5,7 @@ from datetime import datetime
 import sqlite3
 import json
 import time
+from config import tg_webhook_url, admin_id
 
 # глобальные переменные
 s = requests.Session()
@@ -26,11 +27,11 @@ def create_urls_list():
     service_cods = []
     urls = []
     stop_list_cods = []
-    logger.info(' Составляю список ссылок для итераций...')
+    logger.info('Create [urls]...')
     conn = sqlite3.connect(db_path)  # Инициируем подключение к БД
     cursor = conn.cursor()
     #  Собираем список сервис-кодов
-    cursor.execute("SELECT code FROM service_cods_tst")
+    cursor.execute("SELECT code FROM service_cods")
     for cod in cursor:
         service_cods.append(cod[0])
     #  Собираемсписок по стоп листу
@@ -46,9 +47,9 @@ def create_urls_list():
                     '&service-code=' + '{}').format(s)
             urls.append(url)  # запись в общий список ссылок
     conn.commit()
-    logger.info(" Ок")
+    logger.info("Ok")
     # если надо будет чекнуть сколько кодов услуг отсечено, выводим метрики и смотрим.
-    logger.info(f'Кол-во кодов услуг для мониторинга:\nService cods - {len(service_cods)}\nStop list - {len(stop_list_cods)}\nUrls - {len(urls)}\nОтсечено - {(len(service_cods) - len(urls))}\nService cods Итого - {len(service_cods)}')
+    logger.info(f'Created [urls]:\nService cods - {len(service_cods)}\nStop list - {len(stop_list_cods)}\ncut_off - {(len(service_cods) - len(urls))}\nLen_Urls - {len(urls)}')
     open_urls(urls)
 
 
@@ -57,6 +58,7 @@ def open_urls(urls):
     n = 0
     conn = sqlite3.connect(db_path)  # Инициируем подключение к БД
     cursor = conn.cursor()
+    logger.info('Start testing')
     for url in urls:
         n += 1
         r = s.get(url)
@@ -69,14 +71,15 @@ def open_urls(urls):
             'https://uat.autopays.ru/api-shop/rs/shop/test?sec-key=96abc9ad-24dc-4125-9fc4-a8072f7b83c3&service-code=',
             '')
         #  вытащил значение в виде list, забрал первое значение этого list
-        category = cursor.execute(f"SELECT category FROM service_cods_tst WHERE code = '{code}'").fetchall()[0][0]
+        category = cursor.execute(f"SELECT category FROM service_cods WHERE code = '{code}'").fetchall()[0][0]
         now = datetime.now()
         operation_time = now.strftime('%d-%m-%Y %H:%M:%S')
         cursor.execute(
             f"INSERT INTO global_answers_data VALUES (Null, '{operation_time}', '{code}', '{category}', '{timeout}', '{status}')")
         conn.commit()
-        #print(f'{n}|{code}||{timeout}||{category}||{operation_time}||{status}')
-    logger.info('Итерация по кодам услуг завершена.')
+        print(f'{n}|{code}||{timeout}||{category}||{operation_time}||{status}')
+        print(r.status_code)
+    logger.info('Тест по итерации завершен')
     last_id = get_cursor_id('global_answers_data')
     logger.info('Обновляю данные в часовой таблице')
     cursor.execute("DELETE from res_h")  # предварительно затираем то, что было в таблице res_h
@@ -133,7 +136,7 @@ def get_cursor_id(table_name):
 
 def do_alarm(alarmtext):  # отправка сообщения в канал slack
     headers = {"Content-type": "application/json"}
-    url = config.webhook_url
+    url = tg_webhook_url
     payload = {"text": f"{alarmtext}"}
     requests.post(url, headers=headers, data=json.dumps(payload))
 
@@ -155,13 +158,13 @@ def digest():
         f"SELECT code, status, operation_time FROM res_h WHERE category = 'A' AND (status = 'error' OR status = 'услуга не выведена')").fetchall()
     errors_b = cursor.execute(f"SELECT code, status, operation_time FROM res_h WHERE category = 'B' AND (status = 'error' OR status = 'услуга не выведена')").fetchall()
     # Выводим срез по цифрам:
-    logger.info(f'\nВсего проанализировано: {len(len_all_table)} ПУ.\nИз них: \n{len(id_errors)} - С техническинми ошибками\n{len(id_oks)} - В состоянии OK\n{len(id_with_format)} - Не совпали по формату запроса проверки\n{len(manual_check)}   - Неопознанные ошибки\n{len(id_shadow)} - услуга не выведена\n')
+    logger.info(f'\nTested: {len(len_all_table)} PU.\nFor example: \n{len(id_errors)} - error\n{len(id_oks)} - ok\n{len(id_with_format)} - format\n{len(manual_check)} - unidentified requests\n{len(id_shadow)} - not found on ckassa.ru\n')
     print(f'Клиентов категории А с ошибками: {len(errors_a)}\n')
-    logger.info(f'Клиентов категории А с ошибками: {len(errors_a)}\n')
+    logger.info(f'Clients A errors: {len(errors_a)}\n')
     for a in errors_a:
         print(f'Код услуги: {a[0]}\nСтатус услуги: {a[1]}\nВремя проверки: {a[2]}\n')
     print(f'\nКлиентов категории B с ошибками: {len(errors_b)}\n')
-    logger.info(f'\nКлиентов категории B с ошибками: {len(errors_b)}\n')
+    logger.info(f'\nClients B errors: {len(errors_b)}\n')
     for b in errors_b:
         print(f'Код услуги: {b[0]}\nСтатус услуги: {b[1]}\nВремя проверки: {b[2]}\n')
     conn.commit()
@@ -169,12 +172,18 @@ def digest():
         for a in errors_a:
             alarmtext = f'Категория клиента: A\nКод услуги: {a[0]}\nСтатус услуги: {a[1]}\nВремя проверки: {a[2]}'
             do_alarm(alarmtext)
-            logger.warning('Сработал Alarm для клиентов категории А')
+            logger.warning('Alarm for clients A worked')
 
         for b in errors_b:
             alarmtext = f'Категория клиента: B\nКод услуги: {b[0]}\nСтатус услуги: {b[1]}\nВремя проверки: {b[2]}'
             do_alarm(alarmtext)
-            logger.warning('Сработал Alarm для клиентов категории B')
+            logger.warning('Alarm for clients B worked')
+
+
+def tg_alarm(alarmtext):
+    headers = {"Content-type": "application/json"}
+    payload = {"text": f"{alarmtext}", "chat_id": f"{admin_id}"}
+    requests.post(url=tg_webhook_url, data=json.dumps(payload), headers=headers)
 
 
 if __name__ == '__main__':
@@ -185,8 +194,12 @@ if __name__ == '__main__':
             end_time = datetime.now()  # для рассчета времени выполнения скрипта
             work_time = end_time - start_time  # рассчет времени вполнения скрипта
             print('\nВремя работы скрипта = ', work_time)
-            logger.info(f'\nВремя работы скрипта = {work_time}')
-            logger.info('Встаю на паузу.')
+            logger.info(f'\nWorking hours = {work_time}')
+            logger.info('Pause (2400s)')
             time.sleep(2400)
     except KeyboardInterrupt:
         print('\n Вы завершили работу программы. Закрываюсь.')
+    except Exception as e:
+        alarmtext = f'Crossout_helper (app_collector.py): {str(e)}'
+        tg_alarm(alarmtext)
+        logger.error(f'Other except error Exception', exc_info=True)
