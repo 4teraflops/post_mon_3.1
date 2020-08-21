@@ -5,6 +5,7 @@ from datetime import datetime
 import sqlite3
 import json
 import time
+from config import tg_webhook_url, admin_id, sl_webhook_url
 
 # глобальные переменные
 s = requests.Session()
@@ -133,7 +134,7 @@ def get_cursor_id(table_name):
 
 def do_alarm(alarmtext):  # отправка сообщения в канал slack
     headers = {"Content-type": "application/json"}
-    url = config.webhook_url
+    url = sl_webhook_url
     payload = {"text": f"{alarmtext}"}
     requests.post(url, headers=headers, data=json.dumps(payload))
 
@@ -177,6 +178,12 @@ def digest():
             logger.warning('Сработал Alarm для клиентов категории B')
 
 
+def tg_alarm(alarmtext):
+    headers = {"Content-type": "application/json"}
+    payload = {"text": f"{alarmtext}", "chat_id": f"{admin_id}"}
+    requests.post(url=tg_webhook_url, data=json.dumps(payload), headers=headers)
+
+
 if __name__ == '__main__':
     try:
         while True:
@@ -185,8 +192,12 @@ if __name__ == '__main__':
             end_time = datetime.now()  # для рассчета времени выполнения скрипта
             work_time = end_time - start_time  # рассчет времени вполнения скрипта
             print('\nВремя работы скрипта = ', work_time)
-            logger.info(f'\nВремя работы скрипта = {work_time}')
-            logger.info('Встаю на паузу.')
+            logger.info(f'\nWorking hours = {work_time}')
+            logger.info('Pause (2400s)')
             time.sleep(2400)
     except KeyboardInterrupt:
         print('\n Вы завершили работу программы. Закрываюсь.')
+    except Exception as e:
+        alarmtext = f'Crossout_helper (app_collector.py): {str(e)}'
+        tg_alarm(alarmtext)
+        logger.error(f'Other except error Exception', exc_info=True)
