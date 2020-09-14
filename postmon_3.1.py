@@ -31,7 +31,7 @@ def create_urls_list():
     conn = sqlite3.connect(db_path)  # Инициируем подключение к БД
     cursor = conn.cursor()
     #  Собираем список сервис-кодов
-    cursor.execute("SELECT code FROM service_cods_tst")
+    cursor.execute("SELECT code FROM service_cods")
     for cod in cursor:
         service_cods.append(cod[0])
     #  Собираемсписок по стоп листу
@@ -47,9 +47,9 @@ def create_urls_list():
                     '&service-code=' + '{}').format(s)
             urls.append(url)  # запись в общий список ссылок
     conn.commit()
-    logger.info(" Ок")
+    #logger.info(" Ок")
     # если надо будет чекнуть сколько кодов услуг отсечено, выводим метрики и смотрим.
-    logger.info(f'Кол-во кодов услуг для мониторинга:\nService cods - {len(service_cods)}\nStop list - {len(stop_list_cods)}\nUrls - {len(urls)}\nОтсечено - {(len(service_cods) - len(urls))}\nService cods Итого - {len(service_cods)}')
+    #logger.info(f'Кол-во кодов услуг для мониторинга:\nService cods - {len(service_cods)}\nStop list - {len(stop_list_cods)}\nUrls - {len(urls)}\nОтсечено - {(len(service_cods) - len(urls))}\nService cods Итого - {len(service_cods)}')
     open_urls(urls)
 
 
@@ -65,28 +65,34 @@ def open_urls(urls):
         answer_text = r.text.replace('--ERROR--\ncom.techinfocom.bisys.pay.utils.shared.exception.', '').replace('\n',
                                                                                                                  '').replace(
             "'", '')
-        status = check_answer(answer_text)
+        status_after_check = check_answer(answer_text)
+        if type(status_after_check) == tuple:
+            status = status_after_check[0]
+            error_text = status_after_check[1]
+        else:
+            status = status_after_check
+            error_text = ''
         code = str(url).replace(
             'https://uat.autopays.ru/api-shop/rs/shop/test?sec-key=96abc9ad-24dc-4125-9fc4-a8072f7b83c3&service-code=',
             '')
         #  вытащил значение в виде list, забрал первое значение этого list
-        category = cursor.execute(f"SELECT category FROM service_cods_tst WHERE code = '{code}'").fetchall()[0][0]
+        category = cursor.execute(f"SELECT category FROM service_cods WHERE code = '{code}'").fetchall()[0][0]
         now = datetime.now()
         operation_time = now.strftime('%d-%m-%Y %H:%M:%S')
         cursor.execute(
-            f"INSERT INTO global_answers_data VALUES (Null, '{operation_time}', '{code}', '{category}', '{timeout}', '{status}')")
+            f"INSERT INTO global_answers_data VALUES (Null, '{operation_time}', '{code}', '{category}', '{timeout}', '{status}', '{error_text}')")
         conn.commit()
-        #print(f'{n}|{code}||{timeout}||{category}||{operation_time}||{status}')
-    logger.info('Итерация по кодам услуг завершена.')
+        print(f'{n}|{code}||{timeout}||{category}||{operation_time}||{status}||{error_text}')
+    #logger.info('Итерация по кодам услуг завершена.')
     last_id = get_cursor_id('global_answers_data')
-    logger.info('Обновляю данные в часовой таблице')
+    #logger.info('Обновляю данные в часовой таблице')
     cursor.execute("DELETE from res_h")  # предварительно затираем то, что было в таблице res_h
     res = cursor.execute(f"SELECT * FROM global_answers_data WHERE id > {first_id} and id <= {last_id}").fetchall()
     conn.commit()
     # Записываем результаты последней проверки в таблицу res
     for r in res:
-        r1 = r[1:6:1]  # Отсек первый элемент в каждом из списков (это id, чтоб не было конфликтов)
-        cursor.execute(f"INSERT INTO res_h VALUES (Null, ?, ?, ?, ?, ?)", r1)
+        r1 = r[1:7:1]  # Отсек первый элемент в каждом из списков (это id, чтоб не было конфликтов)
+        cursor.execute(f"INSERT INTO res_h VALUES (Null, ?, ?, ?, ?, ?, ?)", r1)
     conn.commit()
 
 
@@ -115,7 +121,7 @@ def check_answer(answer_text):
     for error in lst_errors:
         if error in text:
             status = 'error'
-            return status
+            return status, answer_text
     if 'provider == null' in text:
         status = 'услуга не выведена'
         return status
@@ -153,27 +159,27 @@ def digest():
     len_all_table = cursor.execute(f"SELECT id from res_h").fetchall()
     # Посмотрим есть ли ошибки у клиентов категории А
     errors_a = cursor.execute(
-        f"SELECT code, status, operation_time FROM res_h WHERE category = 'A' AND (status = 'error' OR status = 'услуга не выведена')").fetchall()
-    errors_b = cursor.execute(f"SELECT code, status, operation_time FROM res_h WHERE category = 'B' AND (status = 'error' OR status = 'услуга не выведена')").fetchall()
+        f"SELECT code, status, operation_time, error_text FROM res_h WHERE category = 'A' AND (status = 'error' OR status = 'услуга не выведена')").fetchall()
+    errors_b = cursor.execute(f"SELECT code, status, operation_time, error_text FROM res_h WHERE category = 'B' AND (status = 'error' OR status = 'услуга не выведена')").fetchall()
     # Выводим срез по цифрам:
-    logger.info(f'\nВсего проанализировано: {len(len_all_table)} ПУ.\nИз них: \n{len(id_errors)} - С техническинми ошибками\n{len(id_oks)} - В состоянии OK\n{len(id_with_format)} - Не совпали по формату запроса проверки\n{len(manual_check)}   - Неопознанные ошибки\n{len(id_shadow)} - услуга не выведена\n')
+    #logger.info(f'\nВсего проанализировано: {len(len_all_table)} ПУ.\nИз них: \n{len(id_errors)} - С техническинми ошибками\n{len(id_oks)} - В состоянии OK\n{len(id_with_format)} - Не совпали по формату запроса проверки\n{len(manual_check)}   - Неопознанные ошибки\n{len(id_shadow)} - услуга не выведена\n')
     print(f'Клиентов категории А с ошибками: {len(errors_a)}\n')
-    logger.info(f'Клиентов категории А с ошибками: {len(errors_a)}\n')
+    #logger.info(f'Клиентов категории А с ошибками: {len(errors_a)}\n')
     for a in errors_a:
-        print(f'Код услуги: {a[0]}\nСтатус услуги: {a[1]}\nВремя проверки: {a[2]}\n')
+        print(f'Код услуги: {a[0]}\nСтатус услуги: {a[1]}\nВремя проверки: {a[2]}\nRequest error text: {a[3]}')
     print(f'\nКлиентов категории B с ошибками: {len(errors_b)}\n')
-    logger.info(f'\nКлиентов категории B с ошибками: {len(errors_b)}\n')
+    #logger.info(f'\nКлиентов категории B с ошибками: {len(errors_b)}\n')
     for b in errors_b:
-        print(f'Код услуги: {b[0]}\nСтатус услуги: {b[1]}\nВремя проверки: {b[2]}\n')
+        print(f'Код услуги: {b[0]}\nСтатус услуги: {b[1]}\nВремя проверки: {b[2]}\nRequest error text: {b[3]}')
     conn.commit()
     if errors_a or errors_b:
         for a in errors_a:
-            alarmtext = f'Категория клиента: A\nКод услуги: {a[0]}\nСтатус услуги: {a[1]}\nВремя проверки: {a[2]}'
+            alarmtext = f'*Категория клиента:* A\n*Код услуги:* {a[0]}\n*Статус услуги:* {a[1]}\n*Время проверки:* {a[2]}\n*Текст ошибки:* ```{a[3]}```'
             do_alarm(alarmtext)
             logger.warning('Сработал Alarm для клиентов категории А')
 
         for b in errors_b:
-            alarmtext = f'Категория клиента: B\nКод услуги: {b[0]}\nСтатус услуги: {b[1]}\nВремя проверки: {b[2]}'
+            alarmtext = f'*Категория клиента:* B\n*Код услуги:* {b[0]}\n*Статус услуги:* {b[1]}\n*Время проверки:* {b[2]}\n*Текст ошибки:* ```{b[3]}```'
             do_alarm(alarmtext)
             logger.warning('Сработал Alarm для клиентов категории B')
 
@@ -192,12 +198,12 @@ if __name__ == '__main__':
             end_time = datetime.now()  # для рассчета времени выполнения скрипта
             work_time = end_time - start_time  # рассчет времени вполнения скрипта
             print('\nВремя работы скрипта = ', work_time)
-            logger.info(f'\nWorking hours = {work_time}')
-            logger.info('Pause (2400s)')
+            #logger.info(f'\nWorking hours = {work_time}')
+            #logger.info('Pause (2400s)')
             time.sleep(2400)
     except KeyboardInterrupt:
         print('\n Вы завершили работу программы. Закрываюсь.')
-    except Exception as e:
-        alarmtext = f'Crossout_helper (app_collector.py): {str(e)}'
-        tg_alarm(alarmtext)
-        logger.error(f'Other except error Exception', exc_info=True)
+    #except Exception as e:
+    #    alarmtext = f'Postmon (postmon_3.1.py): {str(e)}'
+    #    tg_alarm(alarmtext)
+    #    logger.error(f'Other except error Exception', exc_info=True)
