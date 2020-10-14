@@ -6,20 +6,17 @@ import sqlite3
 import json
 import time
 from config import tg_webhook_url, admin_id, sl_webhook_url
+from loguru import logger
 
-# глобальные переменные
-s = requests.Session()
-# s.cert = ('src/cert.pem', 'src/dec.key')  # Подстановка сертификата
-db_path = os.getcwd() + os.sep + 'src' + os.sep + 'db.sqlite'
-start_time = datetime.now()
+with open('b.txt', 'rU') as f:
+    service_cods = f.read().split('\n')
+#logger.info(f'service_cods: {service_cods}')
 
-# Храним чувствительные данные в переменной окружения
-# Это значение по умолчанию на случай, если переменной окружения не будет
-os.environ.setdefault('SETTINGS_MODULE', 'config')
-# Импортируем модуль, указанный в переменной окружения
-config = importlib.import_module(os.getenv('SETTINGS_MODULE'))
-
-logging.basicConfig(filename="log/postmon_3.0.log", format='%(asctime)s %(levelname)s:%(message)s', level=logging.INFO)
-logger = logging.getLogger('postmon_3.0')
+db_path = 'src/db.sqlite'
+conn = sqlite3.connect(db_path)  # Инициируем подключение к БД
+cursor = conn.cursor()
 
 
+for code in service_cods:
+    cursor.execute(f'INSERT INTO service_cods VALUES (Null, "{code}", Null, "B")')
+    conn.commit()

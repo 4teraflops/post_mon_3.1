@@ -1,5 +1,5 @@
 import requests
-import logging
+from loguru import logger
 import os, importlib
 from datetime import datetime
 import sqlite3
@@ -19,15 +19,14 @@ os.environ.setdefault('SETTINGS_MODULE', 'config')
 # Импортируем модуль, указанный в переменной окружения
 config = importlib.import_module(os.getenv('SETTINGS_MODULE'))
 
-logging.basicConfig(filename="log/postmon_3.0.log", format='%(asctime)s %(levelname)s:%(message)s', level=logging.INFO)
-logger = logging.getLogger('postmon_3.0')
+logger.add(f'log/{__name__}.log', format='{time} {level} {message}', level='DEBUG', rotation='10 MB', compression='zip')
 
 
 def create_urls_list():
     service_cods = []
     urls = []
     stop_list_cods = []
-    logger.info(' Составляю список ссылок для итераций...')
+    #logger.info(' Составляю список ссылок для итераций...')
     conn = sqlite3.connect(db_path)  # Инициируем подключение к БД
     cursor = conn.cursor()
     #  Собираем список сервис-кодов
@@ -82,7 +81,7 @@ def open_urls(urls):
         cursor.execute(
             f"INSERT INTO global_answers_data VALUES (Null, '{operation_time}', '{code}', '{category}', '{timeout}', '{status}', '{error_text}')")
         conn.commit()
-        print(f'{n}|{code}||{timeout}||{category}||{operation_time}||{status}||{error_text}')
+        #logger.info(f'{n}|{code}||{timeout}||{category}||{operation_time}||{status}||{error_text}')
     #logger.info('Итерация по кодам услуг завершена.')
     last_id = get_cursor_id('global_answers_data')
     #logger.info('Обновляю данные в часовой таблице')
@@ -161,6 +160,7 @@ def digest():
     errors_a = cursor.execute(
         f"SELECT code, status, operation_time, error_text FROM res_h WHERE category = 'A' AND (status = 'error' OR status = 'услуга не выведена')").fetchall()
     errors_b = cursor.execute(f"SELECT code, status, operation_time, error_text FROM res_h WHERE category = 'B' AND (status = 'error' OR status = 'услуга не выведена')").fetchall()
+    conn.commit()
     # Выводим срез по цифрам:
     #logger.info(f'\nВсего проанализировано: {len(len_all_table)} ПУ.\nИз них: \n{len(id_errors)} - С техническинми ошибками\n{len(id_oks)} - В состоянии OK\n{len(id_with_format)} - Не совпали по формату запроса проверки\n{len(manual_check)}   - Неопознанные ошибки\n{len(id_shadow)} - услуга не выведена\n')
     print(f'Клиентов категории А с ошибками: {len(errors_a)}\n')
@@ -168,6 +168,7 @@ def digest():
     for a in errors_a:
         print(f'Код услуги: {a[0]}\nСтатус услуги: {a[1]}\nВремя проверки: {a[2]}\nRequest error text: {a[3]}')
     print(f'\nКлиентов категории B с ошибками: {len(errors_b)}\n')
+    conn.commit()
     #logger.info(f'\nКлиентов категории B с ошибками: {len(errors_b)}\n')
     for b in errors_b:
         print(f'Код услуги: {b[0]}\nСтатус услуги: {b[1]}\nВремя проверки: {b[2]}\nRequest error text: {b[3]}')
@@ -176,12 +177,12 @@ def digest():
         for a in errors_a:
             alarmtext = f'*Категория клиента:* A\n*Код услуги:* {a[0]}\n*Статус услуги:* {a[1]}\n*Время проверки:* {a[2]}\n*Текст ошибки:* ```{a[3]}```'
             do_alarm(alarmtext)
-            logger.warning('Сработал Alarm для клиентов категории А')
+            #logger.warning('Сработал Alarm для клиентов категории А')
 
         for b in errors_b:
             alarmtext = f'*Категория клиента:* B\n*Код услуги:* {b[0]}\n*Статус услуги:* {b[1]}\n*Время проверки:* {b[2]}\n*Текст ошибки:* ```{b[3]}```'
             do_alarm(alarmtext)
-            logger.warning('Сработал Alarm для клиентов категории B')
+            #logger.warning('Сработал Alarm для клиентов категории B')
 
 
 def tg_alarm(alarmtext):
@@ -190,20 +191,25 @@ def tg_alarm(alarmtext):
     requests.post(url=tg_webhook_url, data=json.dumps(payload), headers=headers)
 
 
+def main():
+    while True:
+        create_urls_list()
+        digest()
+        time.sleep(3350)
+
+
 if __name__ == '__main__':
     try:
-        while True:
-            create_urls_list()
-            digest()
-            end_time = datetime.now()  # для рассчета времени выполнения скрипта
-            work_time = end_time - start_time  # рассчет времени вполнения скрипта
-            print('\nВремя работы скрипта = ', work_time)
-            #logger.info(f'\nWorking hours = {work_time}')
-            #logger.info('Pause (2400s)')
-            time.sleep(2400)
+        main()
     except KeyboardInterrupt:
         print('\n Вы завершили работу программы. Закрываюсь.')
-    #except Exception as e:
-    #    alarmtext = f'Postmon (postmon_3.1.py): {str(e)}'
-    #    tg_alarm(alarmtext)
-    #    logger.error(f'Other except error Exception', exc_info=True)
+    except ConnectionError as e:
+        logger.error(f'Connection error: {str(e)}')
+        time.sleep(300)  # Если возникла ошибка подключения, то встаем на паузу на 5 минут и повторяем цикл
+        alarmtext = f'Postmon (postmon_3.1.py): {str(e)}. \n встаю на паузу (5 минут) и попробую снова'
+        tg_alarm(alarmtext)
+        main()
+    except Exception as e:
+        alarmtext = f'Postmon (postmon_3.1.py): {str(e)}'
+        tg_alarm(alarmtext)
+        logger.error(f'Other except error Exception', exc_info=True)

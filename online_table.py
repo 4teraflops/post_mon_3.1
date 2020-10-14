@@ -5,6 +5,7 @@ from datetime import datetime
 import dash_table
 import pandas as pd
 import sqlite3
+import os
 import dash
 import dash_daq as daq
 
@@ -23,7 +24,8 @@ external_stylesheets = ['https://codepen.io/chriddyp/pen/bWLwgP.css']
 
 app = dash.Dash(__name__, external_stylesheets=external_stylesheets)
 server = app.server
-conn = sqlite3.connect('postmon.sqlite', check_same_thread=False)
+db_path = os.getcwd() + os.sep + 'src' + os.sep + 'db.sqlite'
+conn = sqlite3.connect(db_path, check_same_thread=False)
 cursor = conn.cursor()
 
 df = pd.read_sql("SELECT id, operation_time, code, category, timeout, status FROM res_h", conn)
